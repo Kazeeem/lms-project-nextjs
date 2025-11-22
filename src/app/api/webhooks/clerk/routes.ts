@@ -1,8 +1,8 @@
-import connectDB from "@/lib/mongodb";
-import User from "@/models/User";
-import { WebhookEvent } from "@clerk/nextjs/server";
 import { headers } from "next/headers";
 import { Webhook } from "svix";
+import { WebhookEvent } from "@clerk/nextjs/server";
+import connectDB from "@/lib/mongodb";
+import User from "@/models/User";
 
 export async function POST(req: Request) {
     // Get svix headers
