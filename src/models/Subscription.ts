@@ -1,7 +1,7 @@
 import mongoose, { Document, Model, Schema } from 'mongoose';
 
 export interface SubscriptionInterface extends Document {
-    userId: mongoose.Types.ObjectId;
+    userId: string;
     clerkId: string;
     status: 'pending' | 'completed' | 'failed';
     amount: number,
@@ -19,8 +19,7 @@ export interface SubscriptionInterface extends Document {
 
 const SubscriptionSchema: Schema<SubscriptionInterface> = new Schema({
     userId: {
-        type: Schema.Types.ObjectId,
-        ref: 'User',
+        type: String,
         required: true,
         index: true
     },
