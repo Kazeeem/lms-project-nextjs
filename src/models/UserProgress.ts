@@ -1,7 +1,7 @@
 import mongoose, { Document, Model, Schema } from 'mongoose';
 
 // Lesson progress interface
-export interface LessonProgressInterface {
+export interface ILessonProgress {
   lessonId: string;
   completed: boolean;
   completedAt?: Date;
@@ -10,16 +10,16 @@ export interface LessonProgressInterface {
 }
 
 // Module progress interface
-export interface ModuleProgressInterface {
+export interface IModuleProgress {
   moduleId: string;
   completed: boolean;
   completedAt?: Date;
-  lessons: LessonProgressInterface[];
+  lessons: ILessonProgress[];
   progress: number; // 0-100 percentage
 }
 
 // User course progress interface
-export interface UserProgressInterface extends Document {
+export interface IUserProgress extends Document {
   userId: string;
   clerkId: string;
   courseId: string;
@@ -34,7 +34,7 @@ export interface UserProgressInterface extends Document {
   lastAccessedAt: Date;
   
   // Module & Lesson tracking
-  modules: ModuleProgressInterface[];
+  modules: IModuleProgress[];
   
   // Stats
   totalTimeSpent: number; // in seconds
@@ -106,7 +106,7 @@ const ModuleProgressSchema = new Schema({
   },
 });
 
-const UserProgressSchema: Schema<UserProgressInterface> = new Schema(
+const UserProgressSchema: Schema<IUserProgress> = new Schema(
   {
     userId: {
       type: String,
@@ -195,8 +195,8 @@ UserProgressSchema.methods.calculateProgress = function() {
   let totalLessons = 0;
   let completedLessons = 0;
   
-  this.modules.forEach((module: ModuleProgressInterface) => {
-    module.lessons.forEach((lesson: LessonProgressInterface) => {
+  this.modules.forEach((module: IModuleProgress) => {
+    module.lessons.forEach((lesson: ILessonProgress) => {
       totalLessons++;
       if (lesson.completed) {
         completedLessons++;
@@ -217,10 +217,10 @@ UserProgressSchema.methods.calculateProgress = function() {
 
 // Method to mark a lesson as completed
 UserProgressSchema.methods.completeLesson = function(moduleId: string, lessonId: string) {
-  const module = this.modules.find((m: ModuleProgressInterface) => m.moduleId === moduleId);
+  const module = this.modules.find((m: IModuleProgress) => m.moduleId === moduleId);
   
   if (module) {
-    const lesson = module.lessons.find((l: LessonProgressInterface) => l.lessonId === lessonId);
+    const lesson = module.lessons.find((l: ILessonProgress) => l.lessonId === lessonId);
     
     if (lesson && !lesson.completed) {
       lesson.completed = true;
@@ -228,7 +228,7 @@ UserProgressSchema.methods.completeLesson = function(moduleId: string, lessonId:
       
       // Calculate module progress
       const totalLessons = module.lessons.length;
-      const completedLessons = module.lessons.filter((l: LessonProgressInterface) => l.completed).length;
+      const completedLessons = module.lessons.filter((l: ILessonProgress) => l.completed).length;
       module.progress = Math.round((completedLessons / totalLessons) * 100);
       
       // Check if module is completed
@@ -257,8 +257,9 @@ UserProgressSchema.pre('save', function(next) {
 });
 
 // Prevent model overwrite upon initial compile
-const UserProgress: Model<UserProgressInterface> =
+const UserProgress: Model<IUserProgress> =
   mongoose.models.UserProgress || 
-  mongoose.model<UserProgressInterface>('UserProgress', UserProgressSchema);
+  mongoose.model<IUserProgress>('UserProgress', UserProgressSchema);
 
 export default UserProgress;
+

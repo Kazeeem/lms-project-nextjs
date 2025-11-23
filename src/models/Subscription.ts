@@ -1,83 +1,100 @@
 import mongoose, { Document, Model, Schema } from 'mongoose';
 
-export interface SubscriptionInterface extends Document {
-    userId: string;
-    clerkId: string;
-    status: 'pending' | 'completed' | 'failed';
-    amount: number,
-    currency: string,
-    stripePaymentIntentId: string,
-    stripeCustomerId?: string,
-    purchaseDate: Date;
-    activatedAt?: Date;
-    createdAt: Date;
-    updatedAt: Date;
-
-    activate(): void;
-    isActive(): boolean;
-};
-
-const SubscriptionSchema: Schema<SubscriptionInterface> = new Schema({
-    userId: {
-        type: String,
-        required: true,
-        index: true
-    },
-    clerkId: {
-        type: String,
-        required: true,
-        unique: true,
-        index: true,
-    },
-    status: {
-        type: String,
-        enum: ['pending', 'completed', 'failed'],
-        default: 'pending',
-        index: true,
-    },
-    amount: {
-        type: Number,
-        required: true,
-        default: 99,
-    },
-    currency: {
-        type: String,
-        default: 'USD'
-    },
-    stripePaymentIntentId: {
-        type: String,
-        required: true,
-        unique: true,
-        index: true,
-    },
-    stripeCustomerId: {
-        type: String,
-        index: true,
-    },
-    purchaseDate: {
-        type: Date,
-        default: Date.now
-    },
-    activatedAt: {
-        type: Date,
-    }
-}, {
-    timestamps: true,
-});
-
-SubscriptionSchema.index({clerkId: 1, status: 1});
-
-// Methods to mark payment as completed.
-SubscriptionSchema.methods.activate = function (this: SubscriptionInterface) {
-    this.status = 'completed';
-    this.activatedAt = new Date();
-};
-
-SubscriptionSchema.methods.isActive = function (this: SubscriptionInterface) {
-    return this.status === 'completed';
+export interface ISubscription extends Document {
+  userId: string;
+  clerkId: string;
+  
+  // Subscription details
+  status: 'completed' | 'pending' | 'failed';
+  
+  amount: number;
+  currency: string;
+  stripePaymentIntentId: string; 
+  stripeCustomerId?: string;
+  
+  // Dates
+  purchaseDate: Date;
+  activatedAt?: Date;
+  
+  // Timestamps
+  createdAt: Date;
+  updatedAt: Date;
+  
+  // Methods
+  activate(): void;
+  isActive(): boolean;
 }
 
+const SubscriptionSchema: Schema<ISubscription> = new Schema(
+  {
+    userId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    clerkId: {
+      type: String,
+      required: true,
+      unique: true, // One subscription per user
+      index: true,
+    },
+    status: {
+      type: String,
+      enum: ['completed', 'pending', 'failed'],
+      default: 'pending',
+      index: true,
+    },
+    amount: {
+      type: Number,
+      required: true,
+      default: 99, // $99 one-time payment
+    },
+    currency: {
+      type: String,
+      default: 'USD',
+    },
+    stripePaymentIntentId: {
+      type: String,
+      required: true,
+      unique: true, // Prevents duplicate payments
+      index: true,
+    },
+    stripeCustomerId: {
+      type: String,
+      index: true,
+    },
+    purchaseDate: {
+      type: Date,
+      default: Date.now,
+    },
+    activatedAt: {
+      type: Date,
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
 
-const Subscription: Model<SubscriptionInterface> = mongoose.models.Subscription || mongoose.model<SubscriptionInterface>("Subscription", SubscriptionSchema);
+// Compound index for quick subscription lookups
+SubscriptionSchema.index({ clerkId: 1, status: 1 });
+
+// Method to mark payment as completed
+SubscriptionSchema.methods.activate = function() {
+  this.status = 'completed';
+  this.activatedAt = new Date();
+};
+
+// Method to check if subscription is completed (has access)
+// Access is determined ONLY by status, not a separate field
+SubscriptionSchema.methods.isActive = function(): boolean {
+  return this.status === 'completed';
+};
+
+// Prevent model overwrite upon initial compile
+const Subscription: Model<ISubscription> =
+  mongoose.models.Subscription || 
+  mongoose.model<ISubscription>('Subscription', SubscriptionSchema);
 
 export default Subscription;
+

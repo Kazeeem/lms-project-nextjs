@@ -1,69 +1,85 @@
-import { redirect } from "next/navigation";
-import { getUserCourses, getUserStreak } from "@/actions/course";
-import { getCurrentUserWithRole } from "@/lib/auth"
-import Link from "next/link";
+import { redirect } from 'next/navigation';
+import Link from 'next/link';
+import { getCurrentUserWithRole } from '@/lib/auth';
+import { getUserCourses, getPublishedCourses, getUserStreak } from '@/actions/course';
+import { syncUserToDatabase } from '@/actions/user';
 
-const formatDuration = (minutes: number) => {
+// Helper function to format duration from minutes to "Xh Ym" string
+function formatDuration(minutes: number): string {
   const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return `${hours}h ${remainingMinutes}m`;
+  const mins = minutes % 60;
+  
+  if (hours === 0) return `${mins}m`;
+  if (mins === 0) return `${hours}h`;
+  return `${hours}h ${mins}m`;
 }
 
-const StudentDashboard = async() => {
+export default async function StudentDashboardPage() {
+  // Ensure the Clerk user is synced to our MongoDB (fallback if webhooks aren't configured locally)
+  await syncUserToDatabase();
   const user = await getCurrentUserWithRole();
-  
-  if (!user) redirect('/sign-in');
 
+  if (!user) {
+    redirect('/sign-in');
+  }
+
+  // Fetch user's courses with progress from database
   const coursesResult = await getUserCourses(user.id);
-
+  
+  // Fetch user's learning streak
   const streakResult = await getUserStreak(user.id);
-
   const dayStreak = streakResult.success ? streakResult.streak : 0;
-
-  const courses = coursesResult?.success && coursesResult?.courses ? coursesResult.courses.map((course: any) => {
-    let totalMinutes = course.totalDuration || 0;
-
-    if (!totalMinutes && course.modules) {
-      let totalSeconds = 0;
-
-      course.modules.forEach((module: any) => {
-        module.lessons?.forEach((lesson: any) => {
-          totalSeconds += lesson.videoDuration || 0;
-        })
+  
+  // Transform the data to match the UI structure
+  const courses = coursesResult.success && coursesResult.courses
+    ? coursesResult.courses.map((course: any) => {
+        // Calculate duration from modules if totalDuration is not set
+        let totalMinutes = course.totalDuration || 0;
+        if (!totalMinutes && course.modules) {
+          let totalSeconds = 0;
+          course.modules.forEach((module: any) => {
+            module.lessons?.forEach((lesson: any) => {
+              totalSeconds += lesson.videoDuration || 0;
+            });
+          });
+          totalMinutes = Math.ceil(totalSeconds / 60);
+        }
+        
+        return {
+          id: course._id,
+          title: course.title,
+          progress: course.progress || 0,
+          thumbnail: course.thumbnail || '/images/codie-sanchez-500.webp',
+          lessons: course.totalLessons || 0,
+          duration: totalMinutes > 0 ? formatDuration(totalMinutes) : '0m',
+          durationMinutes: totalMinutes, // Store raw minutes for calculation
+          category: course.category,
+          slug: course.slug,
+          description: course.description,
+          instructor: course.instructor,
+          completedLessonsCount: course.completedLessonsCount || 0,
+        };
       })
+    : [];
 
-      totalMinutes = Math.ceil(totalSeconds / 60);
-    }
-
-    return {
-      id: course._id,
-      title: course.title,
-      thumbnail: course.thumbnail || '/images/codie-sanchez-500.webp',
-      progress: course.progress || 0,
-      duration: totalMinutes > 0 ? formatDuration(totalMinutes) : '0m',
-
-      lessons: course.totalLessons || 0,
-      durationMinutes: totalMinutes,
-      category: course.category,
-      slug: course.slug,
-      description: course.description,
-      instructor: course.instructor,
-      completedLessons: course.completedLessonsCount || 0,
-    }
-  }) : [];
-
+  // Calculate stats from real data
   const activeCourses = courses.length;
-
-  const completedLessons = courses.reduce((sum: number, c: typeof courses[0]) => sum + (c.completedLessons || 0), 0);
-
-  const totalLearningTime = courses.reduce((sum: number, c: typeof courses[0]) => sum + (c.durationMinutes || 0), 0);
-
-  const learningTimeFormatted = totalLearningTime > 0 ? formatDuration(totalLearningTime) : '0m';
-
-  /*const recentActivity = courses.filter((c: typeof courses[0]) => c.lastAccessedAt).sort((a: typeof courses[0], b: typeof courses[0]) => {
-    return new Date(b.lastAccessedAt).getTime() - new Date(a.lastAccesedAt).getTime();
-  })[0];*/
-
+  
+  // Sum actual completed lessons from database
+  const completedLessons = courses.reduce((sum: number, c: typeof courses[0]) => {
+    return sum + (c.completedLessonsCount || 0);
+  }, 0);
+  
+  // Calculate total available content (all enrolled courses)
+  const totalLearningTime = courses.reduce((sum: number, c: typeof courses[0]) => {
+    return sum + (c.durationMinutes || 0);
+  }, 0);
+  
+  const learningTimeFormatted = totalLearningTime > 0 
+    ? formatDuration(totalLearningTime) 
+    : '0h';
+  
+  // Generate real recent activity from course progress
   const recentActivity = courses
     .filter((c: typeof courses[0]) => c.progress > 0)
     .sort((a: typeof courses[0], b: typeof courses[0]) => {
@@ -316,7 +332,7 @@ const StudentDashboard = async() => {
                 Complete your daily lesson to maintain your streak
               </p>
               <button className="w-full bg-white text-blue-600 hover:bg-blue-50 font-medium py-3 px-4 rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl">
-                Start Today&apos;s Lesson
+                Start Today's Lesson
               </button>
             </div>
 
@@ -346,6 +362,6 @@ const StudentDashboard = async() => {
         </div>
       </div>
     </div>
-  )
+  );
 }
-export default StudentDashboard
+

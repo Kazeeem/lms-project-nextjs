@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-// import { manuallyActivateSubscription } from '@/actions/course';
+import { manuallyActivateSubscription } from '@/actions/course';
 
 interface Subscription {
   _id: string;
@@ -21,30 +21,30 @@ export default function PendingSubscriptions({ initialSubscriptions }: PendingSu
   const [subscriptions, setSubscriptions] = useState(initialSubscriptions);
   const [activating, setActivating] = useState<string | null>(null);
 
-  // const handleActivate = async (subscriptionId: string) => {
-  //   if (!confirm('Are you sure you want to activate this subscription? This will grant the user lifetime access to all courses.')) {
-  //     return;
-  //   }
+  const handleActivate = async (subscriptionId: string) => {
+    if (!confirm('Are you sure you want to activate this subscription? This will grant the user lifetime access to all courses.')) {
+      return;
+    }
 
-  //   try {
-  //     setActivating(subscriptionId);
+    try {
+      setActivating(subscriptionId);
       
-  //     const result = await manuallyActivateSubscription(subscriptionId);
+      const result = await manuallyActivateSubscription(subscriptionId);
       
-  //     if (result.success) {
-  //       alert('✅ Subscription activated successfully!');
-  //       // Remove from list
-  //       setSubscriptions(subs => subs.filter(s => s._id !== subscriptionId));
-  //     } else {
-  //       alert('❌ ' + result.error);
-  //     }
-  //   } catch (error) {
-  //     console.error('Error:', error);
-  //     alert('Something went wrong. Please try again.');
-  //   } finally {
-  //     setActivating(null);
-  //   }
-  // };
+      if (result.success) {
+        alert('✅ Subscription activated successfully!');
+        // Remove from list
+        setSubscriptions(subs => subs.filter(s => s._id !== subscriptionId));
+      } else {
+        alert('❌ ' + result.error);
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      alert('Something went wrong. Please try again.');
+    } finally {
+      setActivating(null);
+    }
+  };
 
   if (subscriptions.length === 0) {
     return (
@@ -119,7 +119,7 @@ export default function PendingSubscriptions({ initialSubscriptions }: PendingSu
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <button
-                    // onClick={() => handleActivate(sub._id)}
+                    onClick={() => handleActivate(sub._id)}
                     disabled={activating === sub._id}
                     className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >

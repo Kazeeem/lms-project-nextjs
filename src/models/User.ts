@@ -1,41 +1,47 @@
-import mongoose, { Document, Model, Schema } from "mongoose";
+import mongoose, { Document, Model, Schema } from 'mongoose';
 
-export interface UserInterface extends Document {
-    clerkId: string;
-    email: string;
-    firstName: string;
-    lastName: string;
-    imageUrl: string;
-    createdAt: Date;
-    updatedAt: Date;
+export interface IUser extends Document {
+  clerkId: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  imageUrl?: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-const UserSchema: Schema<UserInterface> = new Schema({
+const UserSchema: Schema<IUser> = new Schema(
+  {
     clerkId: {
-        type: String,
-        required: true,
-        unique: true,
-        index: true,
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
     },
     email: {
-        type: String,
-        required: true,
-        unique: true,
-        index: true,
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
     },
     firstName: {
-        type: String,
+      type: String,
     },
     lastName: {
-        type: String,
+      type: String,
     },
     imageUrl: {
-        type: String,
+      type: String,
     },
-}, {
+  },
+  {
     timestamps: true,
-});
+  }
+);
 
-const User: Model<UserInterface> = mongoose.models.User || mongoose.model<UserInterface>("User", UserSchema);
+// Prevent model overwrite upon initial compile
+const User: Model<IUser> =
+  mongoose.models.User || mongoose.model<IUser>('User', UserSchema);
 
 export default User;
+

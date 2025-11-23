@@ -2,16 +2,39 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-
+import { createCheckoutSession } from '@/actions/subscription';
 
 export default function SubscribeButton() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-
+  const handleSubscribe = async () => {
+    try {
+      setLoading(true);
+      
+      const result = await createCheckoutSession();
+      
+      if (result.success && result.url) {
+        // Redirect to Stripe checkout
+        window.location.href = result.url;
+      } else if (result.error?.includes('already have')) {
+        // User already has subscription - go to dashboard
+        router.push('/dashboard');
+      } else {
+        // Other error - show friendly message
+        alert(result.error || 'Failed to create checkout session');
+        setLoading(false);
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      alert('Something went wrong. Please try again.');
+      setLoading(false);
+    }
+  };
 
   return (
     <button
+      onClick={handleSubscribe}
       disabled={loading}
       className="px-8 py-4 gradient-button text-white font-bold rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
     >

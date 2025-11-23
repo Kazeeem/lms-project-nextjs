@@ -1,7 +1,7 @@
 import mongoose, { Document, Model, Schema } from 'mongoose';
 
 // Lesson interface
-export interface LessonInterface {
+export interface ILesson {
   _id?: string;
   title: string;
   description?: string;
@@ -17,23 +17,23 @@ export interface LessonInterface {
 }
 
 // Module/Section interface
-export interface ModuleInterface {
+export interface IModule {
   _id?: string;
   title: string;
   description?: string;
   order: number;
-  lessons: LessonInterface[];
+  lessons: ILesson[];
 }
 
 // Course interface
-export interface CourseInterface extends Document {
+export interface ICourse extends Document {
   title: string;
   slug: string;
   description: string;
   shortDescription?: string;
   
   // Content
-  modules: ModuleInterface[];
+  modules: IModule[];
   
   // Media
   thumbnail?: { public_id: string; url: string } | string | null;
@@ -130,7 +130,7 @@ const ModuleSchema = new Schema({
   lessons: [LessonSchema],
 });
 
-const CourseSchema: Schema<CourseInterface> = new Schema(
+const CourseSchema: Schema<ICourse> = new Schema(
   {
     title: {
       type: String,
@@ -287,3 +287,4 @@ const Course: Model<ICourse> =
   mongoose.models.Course || mongoose.model<ICourse>('Course', CourseSchema);
 
 export default Course;
+

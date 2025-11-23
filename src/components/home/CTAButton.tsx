@@ -5,8 +5,7 @@ import Image from 'next/image';
 import { useUser } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 import AnimatedElement from './AnimatedElement';
-import { createCheckoutSessionAction } from '@/actions/subscriptions';
-
+import { createCheckoutSession } from '@/actions/subscription';
 
 // All-Access Subscription Price
 const SUBSCRIPTION_PRICE = 99;
@@ -14,43 +13,45 @@ const SUBSCRIPTION_PRICE = 99;
 export default function CTAButton() {
   const [isHovered, setIsHovered] = useState(false);
   const [loading, setLoading] = useState(false);
+  const { isSignedIn, isLoaded } = useUser();
   const router = useRouter();
 
-  const {isSignedIn, isLoaded} = useUser();
-
-  const handleClick = async(e: React.MouseEvent) => {
+  const handleClick = async (e: React.MouseEvent) => {
     e.preventDefault();
 
+    // Wait for Clerk to load
     if (!isLoaded || loading) return;
-
+    
     if (!isSignedIn) {
+      // User is not signed in, redirect to sign-in page
       const currentPath = window.location.pathname;
-      router.push(`sign-in?redirect_url=${encodeURIComponent(currentPath)}`);
+      router.push(`/sign-in?redirect_url=${encodeURIComponent(currentPath)}`);
       return;
     }
 
+    // User is signed in - Create Stripe checkout session
     try {
       setLoading(true);
-
-      const result = await createCheckoutSessionAction();
-
-      if (result.success && result.sessionUrl) {
-        window.location.href = result.sessionUrl;
-      }
-      else if (result.error?.includes('already have')) {
+      
+      const result = await createCheckoutSession();
+      
+      if (result.success && result.url) {
+        // Redirect to Stripe checkout page
+        window.location.href = result.url;
+      } else if (result.error?.includes('already have')) {
+        // User already has subscription - go directly to dashboard
         router.push('/dashboard');
-      }
-      else {
-        alert(result.error || "An error occured while processing your request. Please try again later.");
+      } else {
+        // Other error
+        alert(result.error || 'Failed to create checkout session');
         setLoading(false);
       }
     } catch (error) {
-      console.log("Error creating checkout session:", error);
-      alert("An error occurred while processing your request. Please try again.");
+      console.error('Error:', error);
+      alert('Something went wrong. Please try again.');
       setLoading(false);
     }
-  }
-
+  };
 
   return (
     <AnimatedElement
@@ -59,8 +60,8 @@ export default function CTAButton() {
       <div className="margin-bottom-sm">
         <div className="button-group">
           <button
-            disabled={loading}
             onClick={handleClick}
+            disabled={loading}
             className="button-primary inline-block"
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
