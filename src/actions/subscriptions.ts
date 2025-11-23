@@ -71,3 +71,88 @@ export async function createCheckoutSessionAction() {
         }
     }
 }
+
+export async function ensureSubscriptionFromSessionAction(sessionId:string) {
+    try {
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+        if (session.payment_status !== 'paid') {
+            return {
+                success: false,
+                status: 'unpaid',
+                error: 'Payment not completed',
+            }
+        }
+
+        const clerkId = session.metadata?.clerkId as string;
+
+        if (!clerkId) {
+            return {
+                success: false,
+                status: 'error',
+                error:  'Missing clerkI in session metadata'
+            }
+        }
+
+        const connectDB = (await import('@/lib/mongodb')).default;
+        const Subscription = (await import('@/models/Subscription')).default;
+        await connectDB();
+
+        const paymentIntentId = session.payment_intent as string;
+
+        let subscription = await Subscription.findOne({
+            stripePaymentIntentId: paymentIntentId
+        });
+
+        if (subscription) {
+            return {
+                success: true,
+                status: subscription.status,
+                subscription: JSON.parse(JSON.stringify(subscription)),
+                message: subscription.status === 'completed' ? 'Subscription already activated' : 'Subscription pending admin review'
+            }
+        }
+
+        subscription = await Subscription.findOne({clerkId});
+
+        if (subscription) {
+            subscription.stripePaymentIntentId = paymentIntentId;
+            subscription.status = 'pending';
+            subscription.amount = (session.amount_total || 9900) / 100;
+            subscription.purchaseDate = new Date();
+            subscription.stripeCustomerId = session.customer as string;
+            await subscription.save();
+            return {
+                success: true,
+                status: subscription.status,
+                subscription: JSON.parse(JSON.stringify(subscription)),
+                message: 'Subscription created and pending admin review'
+            }
+        }
+
+        subscription = await Subscription.create({
+            userId: clerkId,
+            clerkId,
+            status: 'pending',
+            amount: (session.amount_total || 9900) / 100,
+            currency: 'USD',
+            stripePaymentIntentId: paymentIntentId,
+            purchaseDate: new Date(),
+            stripeCustomerId: session.customer as string,
+        })
+
+        return {
+            success: true,
+            status: subscription.status,
+            subscription: JSON.parse(JSON.stringify(subscription)),
+            message: 'Subscription created and pending admin review'
+        }
+    } catch (error) {
+        console.log('Error ensuring subscription from session:', error);
+        return {
+            success: false,
+            status: 'error',
+            error: 'An error occured while processing your request. Please try again.'
+        }
+    }
+}
