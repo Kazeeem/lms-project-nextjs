@@ -1,9 +1,8 @@
-"use server";
-
-import connectDB from "@/lib/mongodb";
-import Course from "@/models/Course";
-import Subscription from "@/models/Subscription";
-import UserProgress from "@/models/UserProgress";
+'use server';
+import connectDB from '@/lib/mongodb';
+import Course, { ICourse } from '@/models/Course';
+import UserProgress from '@/models/UserProgress';
+import Subscription from '@/models/Subscription';
 import { uploadBase64ImageToCloudinary } from '@/utils/cloudinary';
 
 /**
@@ -270,6 +269,22 @@ export async function updateCourse(
 }
 
 /**
+ * Get all published courses
+ */
+export async function getPublishedCourses() {
+  try {
+    await connectDB();
+    const courses = await Course.find({ isPublished: true })
+      .sort({ createdAt: -1 })
+      .lean();
+    return { success: true, courses: JSON.parse(JSON.stringify(courses)) };
+  } catch (error) {
+    console.error('Error fetching courses:', error);
+    return { success: false, error: 'Failed to fetch courses' };
+  }
+}
+
+/**
  * Get featured courses
  */
 export async function getFeaturedCourses() {
@@ -324,300 +339,175 @@ export async function getCoursesByCategory(category: string) {
   }
 }
 
-export async function activateSubscriptionAction(clerkId: string, stripePaymentIntentId: string, stripeCustomerId?: string) {
-    try {
-        await connectDB();
+/**
+ * Check if user has completed subscription ($99 one-time payment = lifetime access)
+ */
+export async function checkSubscription(clerkId: string) {
+  try {
+    await connectDB();
+    
+    // Simply check if status is 'completed' - that's the ONLY source of truth
+    const subscription = await Subscription.findOne({ 
+      clerkId,
+      status: 'completed'
+    }).lean();
+    
+    return {
+      success: true,
+      isSubscribed: !!subscription, // Boolean: does a completed subscription exist?
+      subscription: subscription ? JSON.parse(JSON.stringify(subscription)) : null
+    };
+  } catch (error) {
+    console.error('Error checking subscription:', error);
+    return { success: false, isSubscribed: false, subscription: null };
+  }
+}
 
-        const existingByPayment = await Subscription.findOne({stripePaymentIntentId});
-
-        if (existingByPayment) {
-            return {
-                success: true,
-                message: 'Subscription already processed',
-                subscription: JSON.parse(JSON.stringify(existingByPayment)),
-                alreadyProcessed: true,
-            }
-        }
-
-        let subscription = await Subscription.findOne({clerkId});
-
-        if (subscription) {
-            subscription.status = 'completed';
-            subscription.activatedAt = new Date();
-            subscription.stripePaymentIntentId = stripePaymentIntentId;
-
-            if (stripeCustomerId) {
-                subscription.stripeCustomerId = stripeCustomerId;
-            }
-
-            await subscription.save()
-        }
-        else { // Create a new subscription
-            subscription = await Subscription.create({
-                clerkId,
-                userId: clerkId,
-                status: 'completed',
-                amount: 99,
-                currency: 'USD',
-                stripePaymentIntentId,
-                stripeCustomerId,
-                purchaseDate: new Date(),
-                activatedAt: new Date(),
+/**
+ * Get user's courses (ALL courses if subscribed, only enrolled if not)
+ */
+export async function getUserCourses(clerkId: string) {
+  try {
+    await connectDB();
+    
+    // Check if user has completed subscription (status: 'completed')
+    const subCheck = await checkSubscription(clerkId);
+    
+    if (subCheck.isSubscribed) {
+      // USER HAS SUBSCRIPTION - Show ALL published courses
+      const allCourses = await Course.find({ isPublished: true })
+        .sort({ createdAt: -1 })
+        .lean();
+      
+      // Get existing progress for courses
+      const progressRecords = await UserProgress.find({ clerkId }).lean();
+      
+      // For each course, attach progress if it exists, otherwise create it
+      const coursesWithProgress = await Promise.all(
+        allCourses.map(async (course) => {
+          let progress = progressRecords.find(
+            p => p.courseId === course._id.toString()
+          );
+          
+          // Auto-create progress tracking if doesn't exist
+          if (!progress) {
+            const newProgress = await createProgressForCourse(clerkId, course._id.toString());
+            progress = (newProgress as any) ?? undefined;
+          }
+          
+          // Count actual completed lessons
+          let completedLessonsCount = 0;
+          if (progress?.modules) {
+            progress.modules.forEach((module: any) => {
+              if (module.lessons) {
+                completedLessonsCount += module.lessons.filter((l: any) => l.completed).length;
+              }
             });
-        }
-
-        return {
-            success: true,
-            message: "Subscription activated",
-            subscription: JSON.parse(JSON.stringify(subscription)),
-            alreadyProcessed: false,
-        }
-    } catch (error) {
-        console.log("Error activating subscription", error);
-        
-        return {
-            success: false,
-            message: 'Failed to activate subscription',
-            error: error instanceof Error ? error.message : 'Unknown error',
-        }
-    }
-}
-
-export async function checkSubscriptionAction(clerkId: string) {
-    try {
-        await connectDB();
-
-        const subscription = await Subscription.findOne({
-            clerkId,
-            status: 'completed'
-        });
-
-        return {
-            success: true,
-            isSubscribed: !!subscription,
-            subscription: subscription ? JSON.parse(JSON.stringify(subscription)) : null,
-        }
-    } catch (error) {
-        console.log('Error checking subscription:', error);
-        
-        return {
-            success: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            isSubscribed: false,
-            subscription: null,
-        }
-    }
-}
-
-export const getUserCourses = async(clerkId: string) => {
-    try {
-        await connectDB();
-
-        const subscriptionCheck = await checkSubscriptionAction(clerkId);
-
-        if (subscriptionCheck.isSubscribed) {
-            const allCourses = await Course.find({isPublished: true}).sort({createdAt: -1}).lean();
-
-            const progressRecords = await UserProgress.find({clerkId}).lean();
-
-            const coursesWithProgress = await Promise.all(
-                allCourses.map(async (course) => {
-                    let progress = progressRecords.find(p => p.courseId === course._id.toString());
-
-                    if (!progress) {
-                        const newProgress = await createProgressForCourse(clerkId, course._id.toString());
-                        progress = (newProgress as any) ?? undefined;
-                    }
-
-                    let completedLessonsCount = 0;
-
-                    if (progress?.modules) {
-                        progress.modules.forEach((module: any) => {
-                            if (module.lessons) {
-                                completedLessonsCount += module.lessons.filter((lesson: any) => lesson.completed).length;
-                            }
-                        })
-                    }
-
-                    return {
-                        ...course,
-                        progress: progress?.overallProgress || 0,
-                        completedLessonsCount,
-                        lastAccessedAt: progress?.lastAccessedAt || new Date(),
-                        isCompleted: progress?.isCompleted || false,
-                    }
-                })
-            )
-
-            return {
-                success: true,
-                courses: JSON.parse(JSON.stringify(coursesWithProgress)),
-                subscription: true,
-            }
-        }
-        else { // No subscription, show only manually enrolled courses
-            const progressRecords = await UserProgress.find({ clerkId })
-                .sort({ lastAccessedAt: -1 })
-                .lean();
-            
-            if (progressRecords.length === 0) {
-                return { success: true, courses: [], subscription: false };
-            }
-            
-            const courseIds = progressRecords.map(p => p.courseId);
-            const courses = await Course.find({ 
-                _id: { $in: courseIds } 
-            }).lean();
-            
-            const coursesWithProgress = courses.map(course => {
-                const progress = progressRecords.find(
-                    p => p.courseId === course._id.toString()
-                );
-                
-                // Count actual completed lessons
-                let completedLessonsCount = 0;
-                if (progress?.modules) {
-                    progress.modules.forEach((module: any) => {
-                        if (module.lessons) {
-                        completedLessonsCount += module.lessons.filter((l: any) => l.completed).length;
-                        }
-                    });
-                }
-                
-                return {
-                    ...course,
-                    progress: progress?.overallProgress || 0,
-                    completedLessonsCount, // Add actual count
-                    lastAccessed: progress?.lastAccessedAt,
-                    isCompleted: progress?.isCompleted || false,
-                };
-            });
-            
-            return { 
-                success: true, 
-                courses: JSON.parse(JSON.stringify(coursesWithProgress)),
-                subscription: false
-            };
-        }
-    } catch (error) {
-        console.log("Error getting user courses", error);
-        return {
-            success: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            courses: [],
-            subscription: false,
-        }
-    }
-}
-
-const createProgressForCourse = async(clerkId: string, courseId: string) => {
-    try {
-        const course = await Course.findById(courseId);
-        if (!course) return null;
-
-        const modules = course.modules.map((module) => ({
-            moduleId: module._id?.toString() || '',
-            completed: false,
-            progress: 0,
-            lessons: module.lessons.map((lesson) => ({
-                lessonId: lesson._id?.toString() || '',
-                completed: false,
-                lastWatchedPosition: 0,
-                timeSpent: 0,
-            }))
-        }))
-
-        const progress = await UserProgress.create({
-            userId: clerkId,
-            clerkId,
-            courseId,
-            modules,
-            overallProgress: 0,
-            isCompleted: false,
-            ienrolledAt: new Date(),
-            lastAccessedAt: new Date(),
-            totalTimeSpent: 0,
-        });
-
-        return progress.toObject();
-    } catch (error) {
-        console.log("Error creating progress for course:", error);
-        return null;
-    }
-}
-
-export const getUserStreak = async (clerkId: string) => {
-    try {
-        await connectDB();
-
-        const progressRecords = await UserProgress.find({clerkId}).sort({lastAccessedAt: -1}).lean();
-
-        if (progressRecords.length === 0) {
-            return {
-                success: true,
-                streak: 0,
-                lastActive: null
-            }
-        }
-
-        const activityDates = progressRecords.filter(p => p.lastAccessedAt).map(p => {
-            const date = new Date(p.lastAccessedAt);
-            return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+          }
+          
+          return {
+            ...course,
+            progress: progress?.overallProgress || 0,
+            completedLessonsCount, // Add actual count
+            lastAccessed: progress?.lastAccessedAt,
+            isCompleted: progress?.isCompleted || false,
+          };
         })
-
-        const uniqueDates = [...new Set(activityDates)].sort((a, b) => a - b);
-
-        const today = new Date();
-
-        today.setHours(0,0,0,0);
-
-        const todayTime = today.getTime();
-
-        const oneDayInMilliseconds = 24 * 60 * 60 * 1000;
-
-        const mostRecentActivity = uniqueDates[0];
-
-        const daysSinceActivity = Math.floor((todayTime - mostRecentActivity) / oneDayInMilliseconds);
-
-        if (daysSinceActivity > 1) {
-            return {
-                success: true,
-                streak: 0,
-                lastActive: new Date(mostRecentActivity),
+      );
+      
+      return { 
+        success: true, 
+        courses: JSON.parse(JSON.stringify(coursesWithProgress)),
+        subscription: true
+      };
+    } else {
+      // NO SUBSCRIPTION - Show only manually enrolled courses (legacy behavior)
+      const progressRecords = await UserProgress.find({ clerkId })
+        .sort({ lastAccessedAt: -1 })
+        .lean();
+      
+      if (progressRecords.length === 0) {
+        return { success: true, courses: [], subscription: false };
+      }
+      
+      const courseIds = progressRecords.map(p => p.courseId);
+      const courses = await Course.find({ 
+        _id: { $in: courseIds } 
+      }).lean();
+      
+      const coursesWithProgress = courses.map(course => {
+        const progress = progressRecords.find(
+          p => p.courseId === course._id.toString()
+        );
+        
+        // Count actual completed lessons
+        let completedLessonsCount = 0;
+        if (progress?.modules) {
+          progress.modules.forEach((module: any) => {
+            if (module.lessons) {
+              completedLessonsCount += module.lessons.filter((l: any) => l.completed).length;
             }
+          });
         }
-
-        let streak = 1;
-
-        let currentDate = mostRecentActivity;
-
-        for (let i = 1; i < uniqueDates.length; i++) {
-            const prevDate = uniqueDates[i];
-            const dayDiff = Math.floor((currentDate - prevDate) / oneDayInMilliseconds);
-
-            if (dayDiff === 1) {
-                streak++;
-                currentDate = prevDate;
-            }
-            else {
-                break;
-            }
-        }
-
+        
         return {
-            success: true,
-            streak,
-            lastActive: new Date(currentDate),
-        }
-    } catch (error) {
-        console.log('Error getting user streak', error);
-        return {
-            success: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            streak: 0,
-            lastActive: null,
-        }
+          ...course,
+          progress: progress?.overallProgress || 0,
+          completedLessonsCount, // Add actual count
+          lastAccessed: progress?.lastAccessedAt,
+          isCompleted: progress?.isCompleted || false,
+        };
+      });
+      
+      return { 
+        success: true, 
+        courses: JSON.parse(JSON.stringify(coursesWithProgress)),
+        subscription: false
+      };
     }
+  } catch (error) {
+    console.error('Error fetching user courses:', error);
+    return { success: false, error: 'Failed to fetch user courses', subscription: false };
+  }
+}
+
+/**
+ * Helper: Create progress tracking for a course
+ */
+async function createProgressForCourse(clerkId: string, courseId: string) {
+  try {
+    const course = await Course.findById(courseId);
+    if (!course) return null;
+    
+    // Create progress structure
+    const modules = course.modules.map((module) => ({
+      moduleId: module._id?.toString() || '',
+      completed: false,
+      progress: 0,
+      lessons: module.lessons.map((lesson) => ({
+        lessonId: lesson._id?.toString() || '',
+        completed: false,
+        lastWatchedPosition: 0,
+        timeSpent: 0,
+      })),
+    }));
+    
+    const progress = await UserProgress.create({
+      userId: clerkId,
+      clerkId,
+      courseId,
+      modules,
+      overallProgress: 0,
+      enrolledAt: new Date(),
+      lastAccessedAt: new Date(),
+    });
+    
+    // Return as lean object to match the type
+    return progress.toObject();
+  } catch (error) {
+    console.error('Error creating progress:', error);
+    return null;
+  }
 }
 
 /**
@@ -720,6 +610,81 @@ export async function getUserCourseProgress(clerkId: string, courseId: string) {
 }
 
 /**
+ * Calculate user's learning streak (consecutive days)
+ */
+export async function getUserStreak(clerkId: string) {
+  try {
+    await connectDB();
+    
+    // Get all user progress records sorted by last access
+    const progressRecords = await UserProgress.find({ clerkId })
+      .sort({ lastAccessedAt: -1 })
+      .lean();
+    
+    if (progressRecords.length === 0) {
+      return { success: true, streak: 0, lastActive: null };
+    }
+    
+    // Get all unique activity dates
+    const activityDates = progressRecords
+      .filter(p => p.lastAccessedAt)
+      .map(p => {
+        const date = new Date(p.lastAccessedAt);
+        // Reset to start of day for comparison
+        return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+      });
+    
+    // Remove duplicates and sort
+    const uniqueDates = [...new Set(activityDates)].sort((a, b) => b - a);
+    
+    if (uniqueDates.length === 0) {
+      return { success: true, streak: 0, lastActive: null };
+    }
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayTime = today.getTime();
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    
+    // Check if user was active today or yesterday (streak still valid)
+    const mostRecentActivity = uniqueDates[0];
+    const daysSinceActivity = Math.floor((todayTime - mostRecentActivity) / oneDayMs);
+    
+    if (daysSinceActivity > 1) {
+      // Streak broken (more than 1 day gap)
+      return { success: true, streak: 0, lastActive: new Date(mostRecentActivity) };
+    }
+    
+    // Calculate consecutive days
+    let streak = 1;
+    let currentDate = mostRecentActivity;
+    
+    for (let i = 1; i < uniqueDates.length; i++) {
+      const prevDate = uniqueDates[i];
+      const dayDiff = Math.floor((currentDate - prevDate) / oneDayMs);
+      
+      if (dayDiff === 1) {
+        // Consecutive day
+        streak++;
+        currentDate = prevDate;
+      } else {
+        // Gap found, stop counting
+        break;
+      }
+    }
+    
+    return {
+      success: true,
+      streak,
+      lastActive: new Date(mostRecentActivity),
+    };
+  } catch (error) {
+    console.error('Error calculating user streak:', error);
+    return { success: false, streak: 0, lastActive: null };
+  }
+}
+
+/**
  * Enroll user in a course
  */
 export async function enrollInCourse(clerkId: string, courseId: string) {
@@ -814,5 +779,223 @@ export async function completeLesson(
   } catch (error) {
     console.error('Error completing lesson:', error);
     return { success: false, error: 'Failed to complete lesson' };
+  }
+}
+
+/**
+ * Activate subscription after successful Stripe payment
+ * Call this from your Stripe webhook handler
+ */
+export async function activateSubscription(
+  clerkId: string,
+  stripePaymentIntentId: string,
+  stripeCustomerId?: string
+) {
+  try {
+    await connectDB();
+    
+    // Check if this payment was already processed (idempotency)
+    const existingByPayment = await Subscription.findOne({ stripePaymentIntentId });
+    if (existingByPayment) {
+      return {
+        success: true,
+        subscription: JSON.parse(JSON.stringify(existingByPayment)),
+        message: 'Subscription already activated',
+        alreadyProcessed: true
+      };
+    }
+    
+    // Check if user already has a subscription
+    let subscription = await Subscription.findOne({ clerkId });
+    
+    if (subscription) {
+      // Update existing subscription (in case of reactivation)
+      subscription.status = 'completed';
+      subscription.activatedAt = new Date();
+      subscription.stripePaymentIntentId = stripePaymentIntentId;
+      if (stripeCustomerId) {
+        subscription.stripeCustomerId = stripeCustomerId;
+      }
+      await subscription.save();
+    } else {
+      // Create new subscription
+      subscription = await Subscription.create({
+        userId: clerkId,
+        clerkId,
+        status: 'completed',
+        amount: 99,
+        currency: 'USD',
+        stripePaymentIntentId,
+        stripeCustomerId,
+        purchaseDate: new Date(),
+        activatedAt: new Date(),
+      });
+    }
+    
+    return {
+      success: true,
+      subscription: JSON.parse(JSON.stringify(subscription)),
+      message: 'Subscription activated! You now have access to all courses.',
+      alreadyProcessed: false
+    };
+  } catch (error) {
+    console.error('Error activating subscription:', error);
+    return { success: false, error: 'Failed to activate subscription' };
+  }
+}
+
+/**
+ * Get pending subscriptions for admin review (payments that succeeded but need manual activation)
+ */
+export async function getPendingSubscriptions() {
+  try {
+    await connectDB();
+    
+    const pendingSubscriptions = await Subscription.find({ status: 'pending' })
+      .sort({ purchaseDate: -1 })
+      .lean();
+    
+    return {
+      success: true,
+      subscriptions: JSON.parse(JSON.stringify(pendingSubscriptions)),
+    };
+  } catch (error) {
+    console.error('Error fetching pending subscriptions:', error);
+    return { success: false, error: 'Failed to fetch pending subscriptions' };
+  }
+}
+
+/**
+ * Manually activate a pending subscription (Admin only)
+ */
+export async function manuallyActivateSubscription(subscriptionId: string) {
+  try {
+    await connectDB();
+    
+    const subscription = await Subscription.findById(subscriptionId);
+    
+    if (!subscription) {
+      return { success: false, error: 'Subscription not found' };
+    }
+    
+    if (subscription.status === 'completed') {
+      return { success: false, error: 'Subscription already activated' };
+    }
+    
+    // Activate the subscription
+    subscription.status = 'completed';
+    subscription.activatedAt = new Date();
+    await subscription.save();
+    
+    return {
+      success: true,
+      subscription: JSON.parse(JSON.stringify(subscription)),
+      message: 'Subscription manually activated successfully',
+    };
+  } catch (error) {
+    console.error('Error manually activating subscription:', error);
+    return { success: false, error: 'Failed to activate subscription' };
+  }
+}
+
+/**
+ * Get course statistics (admin)
+ */
+export async function getCourseStats() {
+  try {
+    await connectDB();
+    
+    const totalCourses = await Course.countDocuments();
+    const publishedCourses = await Course.countDocuments({ isPublished: true });
+    const totalEnrollments = await UserProgress.countDocuments();
+    const completedCourses = await UserProgress.countDocuments({ isCompleted: true });
+    
+    // Subscription stats
+    const totalSubscriptions = await Subscription.countDocuments({ status: 'completed' });
+    const pendingSubscriptions = await Subscription.countDocuments({ status: 'pending' });
+    const totalRevenue = await Subscription.aggregate([
+      { $match: { status: 'completed' } },
+      { $group: { _id: null, total: { $sum: '$amount' } } }
+    ]);
+    
+    const topCourses = await Course.find({ isPublished: true })
+      .sort({ enrolledCount: -1 })
+      .limit(5)
+      .select('title enrolledCount rating')
+      .lean();
+    
+    return {
+      success: true,
+      stats: {
+        totalCourses,
+        publishedCourses,
+        totalEnrollments,
+        completedCourses,
+        completionRate: totalEnrollments > 0 
+          ? ((completedCourses / totalEnrollments) * 100).toFixed(1) 
+          : 0,
+        totalSubscriptions,
+        pendingSubscriptions,
+        totalRevenue: totalRevenue[0]?.total || 0,
+        topCourses: JSON.parse(JSON.stringify(topCourses)),
+      },
+    };
+  } catch (error) {
+    console.error('Error fetching course stats:', error);
+    return { success: false, error: 'Failed to fetch course statistics' };
+  }
+}
+
+/**
+ * Admin: Get all courses (published and unpublished)
+ */
+export async function getAllCoursesAdmin() {
+  try {
+    await connectDB();
+    const courses = await Course.find({})
+      .sort({ createdAt: -1 })
+      .lean();
+    return { success: true, courses: JSON.parse(JSON.stringify(courses)) };
+  } catch (error) {
+    console.error('Error fetching all courses (admin):', error);
+    return { success: false, error: 'Failed to fetch courses' };
+  }
+}
+
+/**
+ * Admin: Set publish status
+ */
+export async function setCoursePublishStatus(slug: string, isPublished: boolean) {
+  try {
+    await connectDB();
+    const updated = await Course.findOneAndUpdate(
+      { slug: slug.toLowerCase() },
+      { isPublished, publishedAt: isPublished ? new Date() : undefined },
+      { new: true }
+    );
+    if (!updated) {
+      return { success: false, error: 'Course not found' };
+    }
+    return { success: true, course: JSON.parse(JSON.stringify(updated)) };
+  } catch (error) {
+    console.error('Error updating publish status:', error);
+    return { success: false, error: 'Failed to update publish status' };
+  }
+}
+
+/**
+ * Admin: Delete a course
+ */
+export async function deleteCourse(slug: string) {
+  try {
+    await connectDB();
+    const deleted = await Course.findOneAndDelete({ slug: slug.toLowerCase() });
+    if (!deleted) {
+      return { success: false, error: 'Course not found' };
+    }
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting course:', error);
+    return { success: false, error: 'Failed to delete course' };
   }
 }
